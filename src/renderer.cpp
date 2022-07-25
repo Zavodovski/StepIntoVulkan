@@ -13,6 +13,10 @@ Renderer::QueueFamilyIndices Renderer::queueIndices_;
 vk::Device Renderer::device_ = nullptr;
 vk::Queue Renderer::graphicQueue_ = nullptr;
 vk::Queue Renderer::presentQueue_ = nullptr;
+vk::SwapchainKHR Renderer::swapchain_ = nullptr;
+Renderer::SwapchainRequiredInfo Renderer::requiredInfo_;
+std::vector<vk::Image> Renderer::images_;
+std::vector<vk::ImageView> Renderer::imageViews_;
 
 void Renderer::Init(SDL_Window* window)
 {
@@ -48,6 +52,16 @@ void Renderer::Init(SDL_Window* window)
     presentQueue_ = device_.getQueue(queueIndices_.presentIndices.value(), 0);
     CHECK_NULL(graphicQueue_);
     CHECK_NULL(presentQueue_);
+
+    int w, h;
+    SDL_GetWindowSize(window, &w, &h);
+    requiredInfo_ = querySwapchainRequiredInfo(w, h);
+
+    swapchain_ = createSwapchain();
+    CHECK_NULL(swapchain_);
+
+    images_ = device_.getSwapchainImagesKHR(swapchain_);
+    imageViews_ = createImageViews();
 }
 
 vk::Instance Renderer::createInstance(const std::vector<const char*> extensions)
@@ -127,8 +141,11 @@ vk::Device Renderer::createDevice()
         queueinfos.push_back(info1);
         queueinfos.push_back(info2);
     }
+
+    std::array<const char*, 1> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     
     vk::DeviceCreateInfo info;
+    info.setPEnabledExtensionNames(extensions);
     info.setQueueCreateInfos(queueinfos);
 
     return phyDevice_.createDevice(info);
@@ -146,8 +163,103 @@ vk::PhysicalDevice Renderer::pickupPhysicalDevice()
     return physicalDevices[0];
 }
 
+vk::SwapchainKHR Renderer::createSwapchain()
+{
+    vk::SwapchainCreateInfoKHR info;
+    info.setImageColorSpace(requiredInfo_.format.colorSpace);
+    info.setImageFormat(requiredInfo_.format.format);
+    info.setMinImageCount(requiredInfo_.imageCount);
+    info.setImageExtent(requiredInfo_.extent);
+    info.setPresentMode(requiredInfo_.presentMode);
+    info.setPreTransform(requiredInfo_.capabilities.currentTransform);
+    
+    if(queueIndices_.graphicsIndices.value() == queueIndices_.presentIndices.value())
+    {
+        info.setQueueFamilyIndices(queueIndices_.graphicsIndices.value());
+        info.setImageSharingMode(vk::SharingMode::eExclusive);
+    }
+    else
+    {
+        std::array<uint32_t, 2> indices{queueIndices_.graphicsIndices.value(),
+                                        queueIndices_.presentIndices.value()};
+        info.setQueueFamilyIndices(indices);
+        info.setImageSharingMode(vk::SharingMode::eConcurrent);
+    }
+
+    info.setClipped(true);
+    info.setSurface(surface_);
+    info.setImageArrayLayers(1);
+    info.setCompositeAlpha(vk::CompositeAlphaFlagBitsKHR::eOpaque);
+    info.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment);
+
+    return device_.createSwapchainKHR(info);
+    
+
+}
+
+Renderer::SwapchainRequiredInfo Renderer::querySwapchainRequiredInfo(int w, int h)
+{
+    SwapchainRequiredInfo info;
+    info.capabilities = phyDevice_.getSurfaceCapabilitiesKHR(surface_);
+    auto formats = phyDevice_.getSurfaceFormatsKHR(surface_);
+    info.format = formats[0];
+    for(auto& format : formats)
+    {
+        if(format.format == vk::Format::eR8G8B8A8Srgb || format.format == vk::Format::eB8G8R8A8Srgb)
+        {
+            info.format = format;
+        }
+    }
+
+    info.extent.width = std::clamp<uint32_t>(w, info.capabilities.minImageExtent.width, info.capabilities.maxImageExtent.width);
+    info.extent.height = std::clamp<uint32_t>(h, info.capabilities.minImageExtent.height, info.capabilities.maxImageExtent.height);
+
+    info.imageCount = std::clamp<uint32_t>(2, info.capabilities.minImageCount, info.capabilities.maxImageCount);
+
+    auto presentModes = phyDevice_.getSurfacePresentModesKHR(surface_);
+    info.presentMode = vk::PresentModeKHR::eFifo;
+    for(auto& present : presentModes)
+    {
+        if(present == vk::PresentModeKHR::eMailbox)
+        {
+            info.presentMode = present;
+        }
+    }
+
+    return info;
+}
+
+std::vector<vk::ImageView> Renderer::createImageViews()
+{
+    std::vector<vk::ImageView> views(images_.size());
+    for(int i = 0; i < views.size(); i ++)
+    {
+        vk::ImageViewCreateInfo info;
+        info.setImage(images_[i]);
+        info.setFormat(requiredInfo_.format.format);
+        info.setViewType(vk::ImageViewType::e2D);
+        vk::ImageSubresourceRange range;
+        range.setBaseMipLevel(0);
+        range.setLevelCount(1);
+        range.setLayerCount(1);
+        range.setBaseArrayLayer(0);
+        range.setAspectMask(vk::ImageAspectFlagBits::eColor);
+        info.setSubresourceRange(range);
+        vk::ComponentMapping mapping;
+        info.setComponents(mapping);
+
+        views[i] = device_.createImageView(info);
+    }
+    return views;
+}
+
 void Renderer::Quit()
 {
+    for(auto& view : imageViews_)
+    {
+        device_.destroyImageView(view);
+    }
+    device_.destroySwapchainKHR(swapchain_);
     device_.destroy();
     instance_.destroySurfaceKHR(surface_);
     instance_.destroy();
