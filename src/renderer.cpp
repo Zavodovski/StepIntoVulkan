@@ -17,6 +17,11 @@ vk::SwapchainKHR Renderer::swapchain_ = nullptr;
 Renderer::SwapchainRequiredInfo Renderer::requiredInfo_;
 std::vector<vk::Image> Renderer::images_;
 std::vector<vk::ImageView> Renderer::imageViews_;
+vk::Pipeline Renderer::pipeline_ = nullptr;
+std::vector<vk::ShaderModule> Renderer::shaderModules_;
+vk::PipelineLayout Renderer::layout_ = nullptr;
+vk::RenderPass Renderer::renderPass_ = nullptr;
+
 
 void Renderer::Init(SDL_Window* window)
 {
@@ -62,6 +67,12 @@ void Renderer::Init(SDL_Window* window)
 
     images_ = device_.getSwapchainImagesKHR(swapchain_);
     imageViews_ = createImageViews();
+
+    layout_ = createLayout();
+    CHECK_NULL(layout_);
+
+    renderPass_ = createRenderPass();
+    CHECK_NULL(renderPass_);
 }
 
 vk::Instance Renderer::createInstance(const std::vector<const char*> extensions)
@@ -255,6 +266,13 @@ std::vector<vk::ImageView> Renderer::createImageViews()
 
 void Renderer::Quit()
 {
+    device_.destroyRenderPass(renderPass_);
+    device_.destroyPipelineLayout(layout_);
+    device_.destroyPipeline(pipeline_);
+    for(auto& shader : shaderModules_)
+    {
+        device_.destroyShaderModule(shader);
+    }
     for(auto& view : imageViews_)
     {
         device_.destroyImageView(view);
@@ -263,4 +281,134 @@ void Renderer::Quit()
     device_.destroy();
     instance_.destroySurfaceKHR(surface_);
     instance_.destroy();
+}
+
+void Renderer::CreatePipeline(vk::ShaderModule vertexShader, vk::ShaderModule fragShader)
+{
+    vk::GraphicsPipelineCreateInfo info;
+
+    //Shader configurations
+    std::array<vk::PipelineShaderStageCreateInfo, 2> stageInfos;
+    stageInfos[0].setModule(vertexShader)
+                 .setStage(vk::ShaderStageFlagBits::eVertex)
+                 .setPName("main");
+    stageInfos[1].setModule(fragShader)
+                 .setStage(vk::ShaderStageFlagBits::eFragment)
+                 .setPName("main");
+    info.setStages(stageInfos);
+    
+    //Vertex Input
+    vk::PipelineVertexInputStateCreateInfo vertexInput;
+    info.setPVertexInputState(&vertexInput);
+
+    //Input Assembly
+    vk::PipelineInputAssemblyStateCreateInfo inputAsm;
+    inputAsm.setPrimitiveRestartEnable(false)
+            .setTopology(vk::PrimitiveTopology::eTriangleList);
+    info.setPInputAssemblyState(&inputAsm);
+
+    //layout
+    info.setLayout(layout_);
+
+    //Viewport and Scissor
+    vk::PipelineViewportStateCreateInfo viewportState;
+    vk::Viewport viewport(0, 0, requiredInfo_.extent.width, requiredInfo_.extent.height, 0.0f, 1.0f);
+    
+    vk::Rect2D scissor({0, 0}, requiredInfo_.extent);
+    viewportState.setViewports(viewport)
+                 .setScissors(scissor);
+    
+    info.setPViewportState(&viewportState);
+
+    //Rasterization
+    vk::PipelineRasterizationStateCreateInfo rastInfo;
+    rastInfo.setRasterizerDiscardEnable(false)
+            .setDepthClampEnable(false)
+            .setDepthBiasClamp(false)
+            .setLineWidth(1)
+            .setCullMode(vk::CullModeFlagBits::eNone)
+            .setPolygonMode(vk::PolygonMode::eFill);
+    
+    info.setPRasterizationState(&rastInfo);
+
+    //Multisample
+    vk::PipelineMultisampleStateCreateInfo multisample;
+    multisample.setSampleShadingEnable(false)
+               .setRasterizationSamples(vk::SampleCountFlagBits::e1);
+    info.setPMultisampleState(&multisample);
+
+    //DepthStencil
+    info.setPDepthStencilState(nullptr);
+
+    //Color Blend
+    vk::PipelineColorBlendStateCreateInfo colorBlend;
+    vk::PipelineColorBlendAttachmentState attBlendState;
+    attBlendState.setColorWriteMask(vk::ColorComponentFlagBits::eR |
+                                    vk::ColorComponentFlagBits::eG |
+                                    vk::ColorComponentFlagBits::eB |
+                                    vk::ColorComponentFlagBits::eA);
+    colorBlend.setLogicOpEnable(false)
+              .setAttachments(attBlendState);
+    
+    info.setPColorBlendState(&colorBlend);
+
+    //RenderPass
+    info.setRenderPass(renderPass_);
+
+    auto result = device_.createGraphicsPipeline(nullptr, info);
+    if(result.result != vk::Result::eSuccess)
+    {
+        throw std::runtime_error("pipeline create failed");
+    }
+
+    pipeline_ = result.value; 
+
+}
+
+vk::ShaderModule Renderer::CreateShaderModule(const char* filename)
+{
+    std::ifstream file(filename, std::ios::binary|std::ios::in);
+    std::vector<char> content((std::istreambuf_iterator<char>(file)),
+                               std::istreambuf_iterator<char>());
+    
+    file.close();
+
+    vk::ShaderModuleCreateInfo info;
+    info.pCode = (uint32_t*)content.data();
+    info.codeSize = content.size();
+
+    shaderModules_.push_back(device_.createShaderModule(info));
+    return shaderModules_.back();
+}
+
+vk::PipelineLayout Renderer::createLayout()
+{
+    vk::PipelineLayoutCreateInfo info;
+    return device_.createPipelineLayout(info);
+}
+
+vk::RenderPass Renderer::createRenderPass()
+{
+    vk::RenderPassCreateInfo createInfo;
+    vk::AttachmentDescription attachmentDesc;
+    attachmentDesc.setSamples(vk::SampleCountFlagBits::e1)
+                  .setLoadOp(vk::AttachmentLoadOp::eClear)
+                  .setStoreOp(vk::AttachmentStoreOp::eStore)
+                  .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
+                  .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+                  .setFormat(requiredInfo_.format.format)
+                  .setInitialLayout(vk::ImageLayout::eUndefined)
+                  .setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
+    createInfo.setAttachments(attachmentDesc);
+
+    vk::SubpassDescription subpassDesc;
+    vk::AttachmentReference refer;
+    refer.setLayout(vk::ImageLayout::eColorAttachmentOptimal)
+         .setAttachment(0);
+    subpassDesc.setColorAttachments(refer);
+
+    createInfo.setSubpasses(subpassDesc);
+
+    return device_.createRenderPass(createInfo);
+
 }

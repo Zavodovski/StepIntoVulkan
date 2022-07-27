@@ -10,11 +10,15 @@
 #include <iostream>
 #include <array>
 #include <optional>
+#include <fstream>
 class Renderer final
 {
 public:
     static void Init(SDL_Window* window);
     static void Quit();
+    static void CreatePipeline(vk::ShaderModule vertexShader, vk::ShaderModule frag);
+    static vk::ShaderModule CreateShaderModule(const char* filename);
+
 private:
     struct QueueFamilyIndices
     {
@@ -43,7 +47,10 @@ private:
     static vk::SwapchainKHR swapchain_;
     static std::vector<vk::Image> images_;
     static std::vector<vk::ImageView> imageViews_;
-    
+    static vk::Pipeline pipeline_;
+    static std::vector<vk::ShaderModule> shaderModules_;
+    static vk::PipelineLayout layout_;
+    static vk::RenderPass renderPass_;
 
     static vk::Instance createInstance(const std::vector<const char*> extensions);
     static vk::SurfaceKHR createSurface(SDL_Window* window);
@@ -51,6 +58,9 @@ private:
     static vk::Device createDevice();
     static vk::SwapchainKHR createSwapchain();
     static std::vector<vk::ImageView> createImageViews();
+    static vk::PipelineLayout createLayout();
+    static vk::RenderPass createRenderPass();
+    
 
     static QueueFamilyIndices queuePhysicalDevice();
     static SwapchainRequiredInfo querySwapchainRequiredInfo(int w, int h);

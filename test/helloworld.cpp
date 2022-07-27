@@ -11,6 +11,10 @@ int main(int, char**)
                                           SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN);
 
     Renderer::Init(window);
+    auto vertexShader = Renderer::CreateShaderModule("vert.spv");
+    auto fragShader = Renderer::CreateShaderModule("frag.spv");
+
+    Renderer::CreatePipeline(vertexShader, fragShader);
     
     bool isquit = false;
     SDL_Event event;
