@@ -25,8 +25,10 @@ int main(int, char**)
             if(event.type == SDL_QUIT)
                 isquit = true;
         }
+        Renderer::Render();
     }
     
+    Renderer::WaitIdle();
     
     Renderer::Quit();
     std::cout << "hello test" << std::endl;
