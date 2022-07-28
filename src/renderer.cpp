@@ -21,6 +21,7 @@ vk::Pipeline Renderer::pipeline_ = nullptr;
 std::vector<vk::ShaderModule> Renderer::shaderModules_;
 vk::PipelineLayout Renderer::layout_ = nullptr;
 vk::RenderPass Renderer::renderPass_ = nullptr;
+std::vector<vk::Framebuffer> Renderer::framebuffers_;
 
 
 void Renderer::Init(SDL_Window* window)
@@ -73,6 +74,12 @@ void Renderer::Init(SDL_Window* window)
 
     renderPass_ = createRenderPass();
     CHECK_NULL(renderPass_);
+
+    framebuffers_ = createFramebuffers();
+    for(auto& framebuffer : framebuffers_)
+    {
+        CHECK_NULL(framebuffer);
+    }
 }
 
 vk::Instance Renderer::createInstance(const std::vector<const char*> extensions)
@@ -266,6 +273,10 @@ std::vector<vk::ImageView> Renderer::createImageViews()
 
 void Renderer::Quit()
 {
+    for(auto& framebuffer : framebuffers_)
+    {
+        device_.destroyFramebuffer(framebuffer);
+    }
     device_.destroyRenderPass(renderPass_);
     device_.destroyPipelineLayout(layout_);
     device_.destroyPipeline(pipeline_);
@@ -406,9 +417,27 @@ vk::RenderPass Renderer::createRenderPass()
     refer.setLayout(vk::ImageLayout::eColorAttachmentOptimal)
          .setAttachment(0);
     subpassDesc.setColorAttachments(refer);
+    subpassDesc.setPipelineBindPoint(vk::PipelineBindPoint::eGraphics);
 
     createInfo.setSubpasses(subpassDesc);
 
     return device_.createRenderPass(createInfo);
 
+}
+
+std::vector<vk::Framebuffer> Renderer::createFramebuffers()
+{
+    std::vector<vk::Framebuffer> result;
+
+    for(int i = 0; i < imageViews_.size(); i ++)
+    {
+        vk::FramebufferCreateInfo info;
+        info.setRenderPass(renderPass_);
+        info.setLayers(1);
+        info.setWidth(requiredInfo_.extent.width);
+        info.setHeight(requiredInfo_.extent.height);
+        info.setAttachments(imageViews_[i]);
+        result.push_back(device_.createFramebuffer(info));
+    }
+    return result;
 }

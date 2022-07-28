@@ -51,6 +51,7 @@ private:
     static std::vector<vk::ShaderModule> shaderModules_;
     static vk::PipelineLayout layout_;
     static vk::RenderPass renderPass_;
+    static std::vector<vk::Framebuffer> framebuffers_;
 
     static vk::Instance createInstance(const std::vector<const char*> extensions);
     static vk::SurfaceKHR createSurface(SDL_Window* window);
@@ -60,6 +61,7 @@ private:
     static std::vector<vk::ImageView> createImageViews();
     static vk::PipelineLayout createLayout();
     static vk::RenderPass createRenderPass();
+    static std::vector<vk::Framebuffer> createFramebuffers();
     
 
     static QueueFamilyIndices queuePhysicalDevice();
