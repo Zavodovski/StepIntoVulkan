@@ -27,6 +27,57 @@ vk::CommandBuffer Renderer::cmdBuf_ = nullptr;
 vk::Semaphore Renderer::imageAvaliableSem_ = nullptr;
 vk::Semaphore Renderer::renderFinishSem_ = nullptr;
 vk::Fence Renderer::fence_ = nullptr;
+vk::Buffer Renderer::vertexBuffer_ = nullptr;
+vk::DeviceMemory Renderer::vertexMem_ = nullptr;
+
+struct Vec2
+{
+    float x, y;
+};
+
+struct Color
+{
+    float r, g, b, a;
+};
+
+
+struct Vertex
+{
+    Vec2 position;
+    Color color;
+    static vk::VertexInputBindingDescription GetBindingDescription()
+    {
+        static vk::VertexInputBindingDescription description;
+        description.setBinding(0)
+                   .setInputRate(vk::VertexInputRate::eVertex)
+                   .setStride(sizeof(Vertex));
+
+        return description;
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 2> GetAttrDescription()
+    {
+        static std::array<vk::VertexInputAttributeDescription, 2> desc;
+        desc[0].setBinding(0)
+               .setLocation(0)
+               .setFormat(vk::Format::eR32G32Sfloat)
+               .setOffset(offsetof(Vertex, position));
+        desc[1].setBinding(0)
+               .setLocation(1)
+               .setFormat(vk::Format::eR32G32B32Sfloat)
+               .setOffset(offsetof(Vertex, color));
+        
+        return desc;
+        
+    }
+};
+
+std::array vertices
+{   Vertex{{-0.5, -0.5},{1, 0, 0}},
+    Vertex{{ 0.5, -0.5},{0, 1, 0}},
+    Vertex{{ 0.0,  0.5},{0, 0, 1}},
+};
+
 
 
 void Renderer::Init(SDL_Window* window)
@@ -99,6 +150,17 @@ void Renderer::Init(SDL_Window* window)
 
     fence_ = createFence();
     CHECK_NULL(fence_);
+
+    vertexBuffer_ = createBuffer(vk::BufferUsageFlagBits::eVertexBuffer);
+    vertexMem_ = allocateMem(vertexBuffer_);
+    CHECK_NULL(vertexBuffer_);
+    CHECK_NULL(vertexMem_);
+
+    device_.bindBufferMemory(vertexBuffer_, vertexMem_, 0);
+    
+    void* data = device_.mapMemory(vertexMem_, 0, sizeof(vertices));
+    memcpy(data, vertices.data(), sizeof(vertices));
+    device_.unmapMemory(vertexMem_);
 }
 
 vk::Instance Renderer::createInstance(const std::vector<const char*> extensions)
@@ -292,6 +354,8 @@ std::vector<vk::ImageView> Renderer::createImageViews()
 
 void Renderer::Quit()
 {
+    device_.freeMemory(vertexMem_);
+    device_.destroyBuffer(vertexBuffer_);
     device_.destroyFence(fence_);
     device_.destroySemaphore(imageAvaliableSem_);
     device_.destroySemaphore(renderFinishSem_);
@@ -334,6 +398,10 @@ void Renderer::CreatePipeline(vk::ShaderModule vertexShader, vk::ShaderModule fr
     
     //Vertex Input
     vk::PipelineVertexInputStateCreateInfo vertexInput;
+    auto bindingDesc = Vertex::GetBindingDescription();
+    auto attriDesc = Vertex::GetAttrDescription();
+    vertexInput.setVertexAttributeDescriptions(attriDesc)
+               .setVertexBindingDescriptions(bindingDesc);
     info.setPVertexInputState(&vertexInput);
 
     //Input Assembly
@@ -505,7 +573,11 @@ void Renderer::recordCmd(vk::CommandBuffer buf, vk::Framebuffer fbo)
     buf.beginRenderPass(renderPassBegin, vk::SubpassContents::eInline);
     
     buf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline_);
-    buf.draw(3, 1, 0, 0);
+    
+    vk::DeviceSize size = 0;
+    buf.bindVertexBuffers(0, vertexBuffer_, size);
+    
+    buf.draw(vertices.size(), 1, 0, 0);
 
     buf.endRenderPass();
 
@@ -570,4 +642,48 @@ vk::Fence Renderer::createFence()
 void Renderer::WaitIdle()
 {
     device_.waitIdle();
+}
+
+vk::Buffer Renderer::createBuffer(vk::BufferUsageFlags flag)
+{
+    vk::BufferCreateInfo info;
+    info.setSharingMode(vk::SharingMode::eExclusive)
+        .setQueueFamilyIndices(queueIndices_.graphicsIndices.value())
+        .setSize(sizeof(vertices))
+        .setUsage(flag);
+
+    return device_.createBuffer(info);
+}
+
+vk::DeviceMemory Renderer::allocateMem(vk::Buffer buffer)
+{
+    auto requirement = queryMemInfo(buffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+    
+    vk::MemoryAllocateInfo info;
+    info.setAllocationSize(requirement.size)
+        .setMemoryTypeIndex(requirement.index);
+
+
+    return device_.allocateMemory(info);
+}
+
+Renderer::MemRequiredInfo Renderer::queryMemInfo(vk::Buffer buffer, vk::MemoryPropertyFlags flag)
+{
+    MemRequiredInfo info;
+    auto property = phyDevice_.getMemoryProperties();
+
+    auto requirement = device_.getBufferMemoryRequirements(buffer);
+
+    info.size = requirement.size;
+    for(int i = 0; i < property.memoryTypeCount; i ++)
+    {
+        if((requirement.memoryTypeBits & (1 << i))
+            && (property.memoryTypes[i].propertyFlags & (flag)))
+        {
+            info.index = i;
+        }
+    }
+
+    return info;
+
 }
