@@ -70,6 +70,10 @@ private:
     static vk::Fence fence_;
     static vk::Buffer vertexBuffer_;
     static vk::DeviceMemory vertexMem_;
+    static vk::Buffer deviceBuffer_;
+    static vk::DeviceMemory deviceMem_;
+    static vk::Buffer indexBuffer_;
+    static vk::DeviceMemory indexMem_;
 
     static vk::Instance createInstance(const std::vector<const char*> extensions);
     static vk::SurfaceKHR createSurface(SDL_Window* window);
@@ -84,7 +88,7 @@ private:
     static vk::CommandBuffer createCmdBuffer();
     static vk::Fence createFence();
     static vk::Buffer createBuffer(vk::BufferUsageFlags flag);
-    static vk::DeviceMemory allocateMem(vk::Buffer buffer);
+    static vk::DeviceMemory allocateMem(vk::Buffer buffer, vk::MemoryPropertyFlags flag);
     static MemRequiredInfo queryMemInfo(vk::Buffer buffer, vk::MemoryPropertyFlags flag);
 
     static void recordCmd(vk::CommandBuffer buf, vk::Framebuffer fbo);

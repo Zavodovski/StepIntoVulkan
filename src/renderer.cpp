@@ -29,6 +29,10 @@ vk::Semaphore Renderer::renderFinishSem_ = nullptr;
 vk::Fence Renderer::fence_ = nullptr;
 vk::Buffer Renderer::vertexBuffer_ = nullptr;
 vk::DeviceMemory Renderer::vertexMem_ = nullptr;
+vk::Buffer Renderer::deviceBuffer_ = nullptr;
+vk::DeviceMemory Renderer::deviceMem_ = nullptr;
+vk::Buffer Renderer::indexBuffer_ = nullptr;
+vk::DeviceMemory Renderer::indexMem_ = nullptr;
 
 struct Vec2
 {
@@ -75,8 +79,11 @@ struct Vertex
 std::array vertices
 {   Vertex{{-0.5, -0.5},{1, 0, 0}},
     Vertex{{ 0.5, -0.5},{0, 1, 0}},
-    Vertex{{ 0.0,  0.5},{0, 0, 1}},
+    Vertex{{ 0.5,  0.5},{0, 0, 1}},
+    Vertex{{-0.5,  0.5},{0, 0, 1}}
 };
+
+std::array<uint16_t, 6> indices {0, 1, 2, 0, 2, 3};
 
 
 
@@ -151,16 +158,59 @@ void Renderer::Init(SDL_Window* window)
     fence_ = createFence();
     CHECK_NULL(fence_);
 
-    vertexBuffer_ = createBuffer(vk::BufferUsageFlagBits::eVertexBuffer);
-    vertexMem_ = allocateMem(vertexBuffer_);
+    vertexBuffer_ = createBuffer(vk::BufferUsageFlagBits::eTransferSrc);
+    vertexMem_ = allocateMem(vertexBuffer_, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
     CHECK_NULL(vertexBuffer_);
     CHECK_NULL(vertexMem_);
 
+    deviceBuffer_ = createBuffer(vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer);
+    deviceMem_ = allocateMem(deviceBuffer_, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    CHECK_NULL(deviceBuffer_);
+    CHECK_NULL(deviceMem_);
+
     device_.bindBufferMemory(vertexBuffer_, vertexMem_, 0);
+    device_.bindBufferMemory(deviceBuffer_, deviceMem_, 0);
     
     void* data = device_.mapMemory(vertexMem_, 0, sizeof(vertices));
     memcpy(data, vertices.data(), sizeof(vertices));
     device_.unmapMemory(vertexMem_);
+
+    vk::CommandBuffer transformCmdBuf = createCmdBuffer();
+    CHECK_NULL(transformCmdBuf);
+
+    vk::CommandBufferBeginInfo info;
+    info.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+
+    transformCmdBuf.begin(info);
+
+    vk::BufferCopy region;
+    region.setDstOffset(0)
+          .setSrcOffset(0)
+          .setSize(sizeof(vertices));
+    transformCmdBuf.copyBuffer(vertexBuffer_, deviceBuffer_, region);
+
+    transformCmdBuf.end();
+
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBuffers(transformCmdBuf);
+
+    graphicQueue_.submit(submitInfo);
+
+    device_.waitIdle();
+
+    device_.freeCommandBuffers(cmdPool_, transformCmdBuf);
+
+    indexBuffer_ = createBuffer(vk::BufferUsageFlagBits::eIndexBuffer);
+    indexMem_ = allocateMem(indexBuffer_, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+    CHECK_NULL(indexBuffer_);
+    CHECK_NULL(indexMem_);
+
+    device_.bindBufferMemory(indexBuffer_, indexMem_, 0);
+
+    data = device_.mapMemory(indexMem_, 0, sizeof(indices));
+    memcpy(data, indices.data(), sizeof(indices));
+    device_.unmapMemory(indexMem_);
+
 }
 
 vk::Instance Renderer::createInstance(const std::vector<const char*> extensions)
@@ -355,7 +405,11 @@ std::vector<vk::ImageView> Renderer::createImageViews()
 void Renderer::Quit()
 {
     device_.freeMemory(vertexMem_);
+    device_.freeMemory(indexMem_);
+    device_.freeMemory(deviceMem_);
     device_.destroyBuffer(vertexBuffer_);
+    device_.destroyBuffer(deviceBuffer_);
+    device_.destroyBuffer(indexBuffer_);
     device_.destroyFence(fence_);
     device_.destroySemaphore(imageAvaliableSem_);
     device_.destroySemaphore(renderFinishSem_);
@@ -575,10 +629,10 @@ void Renderer::recordCmd(vk::CommandBuffer buf, vk::Framebuffer fbo)
     buf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline_);
     
     vk::DeviceSize size = 0;
-    buf.bindVertexBuffers(0, vertexBuffer_, size);
+    buf.bindVertexBuffers(0, deviceBuffer_, size);
+    buf.bindIndexBuffer(indexBuffer_, 0, vk::IndexType::eUint16);
     
-    buf.draw(vertices.size(), 1, 0, 0);
-
+    buf.drawIndexed(indices.size(), 1, 0, 0, 0);
     buf.endRenderPass();
 
     buf.end();
@@ -655,9 +709,9 @@ vk::Buffer Renderer::createBuffer(vk::BufferUsageFlags flag)
     return device_.createBuffer(info);
 }
 
-vk::DeviceMemory Renderer::allocateMem(vk::Buffer buffer)
+vk::DeviceMemory Renderer::allocateMem(vk::Buffer buffer, vk::MemoryPropertyFlags flag)
 {
-    auto requirement = queryMemInfo(buffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+    auto requirement = queryMemInfo(buffer, flag);
     
     vk::MemoryAllocateInfo info;
     info.setAllocationSize(requirement.size)
